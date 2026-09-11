@@ -68,6 +68,23 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Without this every build calls itself whatever is committed, so three releases in a
+      # row produced installers all named 0.1.0 and a tester had no way to tell them apart.
+      # MSI upgrades compare this number too, and refuse when it has not moved.
+      - name: Take the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          node -e '
+            const fs = require("fs");
+            const path = "src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(path, "utf8"));
+            conf.version = process.argv[1];
+            fs.writeFileSync(path, JSON.stringify(conf, null, 2) + "\n");
+          ' "$version"
+          echo "building version $version"
+
       - name: Build
         # Not through scripts/tauri.sh: that wrapper exists to sign dev builds so the
         # keychain stops asking, and a release bundle is signed by Tauri itself.

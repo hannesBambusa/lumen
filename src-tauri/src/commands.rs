@@ -102,6 +102,7 @@ pub async fn connect_account(
 /// Pull recent mail into the local database.
 #[tauri::command]
 pub async fn sync_now(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     days: Option<u32>,
 ) -> CmdResult<SyncReport> {
@@ -120,7 +121,10 @@ pub async fn sync_now(
 
         let mut guard = session.lock().map_err(describe)?;
         let account = guard.as_mut().ok_or("no account is connected")?;
-        sync::sync_account(&db, account, window).map_err(describe)
+        sync::sync_account(&db, account, window, |stored, total| {
+            let _ = app.emit("sync-progress", (stored, total));
+        })
+        .map_err(describe)
     })
     .await
     .map_err(describe)?

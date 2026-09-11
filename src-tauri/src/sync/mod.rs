@@ -132,10 +132,17 @@ fn reconcile_drafts(db: &Db, account: &mut GmailAccount, account_id: i64) -> Res
     Ok(gone.len())
 }
 
+/// Pull mail, reporting each message as it lands.
+///
+/// `on_stored` is called with (stored so far, total to fetch) after every message is
+/// written. A first sync can run for minutes, and without this it is indistinguishable from
+/// a hung app: the messages are arriving and being stored the whole time, and nothing said
+/// so.
 pub fn sync_account(
     db: &Db,
     account: &mut GmailAccount,
     window: Window,
+    on_stored: impl Fn(u32, u32),
 ) -> Result<SyncReport> {
     let account_id = db.with_conn(|conn| upsert_account(conn, account.email()))?;
 
@@ -162,6 +169,7 @@ pub fn sync_account(
             Ok(message) => {
                 db.with_conn(|conn| store_message(conn, account_id, &message))?;
                 stored += 1;
+                on_stored(stored as u32, fetched as u32);
             }
             // Rate limiting is not this message's fault and will not clear by trying the
             // next one, so stop and keep what is already stored.

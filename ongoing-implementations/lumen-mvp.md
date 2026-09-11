@@ -199,6 +199,16 @@ Swedish. Only the app's own words are translated; mail stays as written. Changin
 remounts the tree (keyed on locale) rather than chasing every cached string. Translation
 target names shown localised, sent to the model in English.
 
+**A sync fills the list as it runs.** Every message is fetched with its own request, 150ms
+apart, so a first sync of a thousand messages takes six to nine minutes; it reported nothing
+until it finished, which is indistinguishable from a hung app even though mail was landing
+the whole time. `sync_account` now calls back on every stored message and the command emits
+`sync-progress`; the sidebar counts ("120 av 400…") and the list reloads at most every 700ms,
+so the number moves continuously and the mail catches up a couple of times a second. Only
+affordable because a mailbox load is now a fraction of a second. The serial fetching itself
+is the remaining cost: Gmail allows roughly 20 requests a second per user against the 7 this
+does, and its batch endpoint takes 100 at once. `src-tauri/src/sync/mod.rs`, `src/App.tsx`.
+
 **Startup does no parsing.** Opening the app took fourteen seconds on a 2000-message
 mailbox, and measurement said why: `load_mailbox` re-derived every message's body, quotes and
 signature on every launch, 56 MB of mail HTML through `split_quote`, `split_signature`,

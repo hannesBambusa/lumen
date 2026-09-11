@@ -63,6 +63,14 @@ const FIRST_CHECK_MS = 1500;
  */
 const QUIET_FAILURES_BEFORE_SPEAKING = 5;
 
+/**
+ * How often the list catches up with an in-flight sync.
+ *
+ * Often enough to look alive, rarely enough that a mailbox read per message does not become
+ * the slow part of syncing.
+ */
+const REFRESH_WHILE_SYNCING_MS = 700;
+
 /** Returning to the window checks again, but not if it was checked moments ago. */
 const REFOCUS_MIN_AGE_MS = 60 * 1000;
 
@@ -145,6 +153,33 @@ export default function App() {
   }, [refresh]);
 
   /**
+   * The list fills in while a sync runs.
+   *
+   * Reloading on every stored message would mean a full mailbox read per message, so the
+   * reload is throttled and the counter is not: the number moves continuously, the list
+   * catches up a couple of times a second. Cheap now that a load is a fraction of a second.
+   */
+  const [arriving, setArriving] = useState<{ stored: number; total: number } | null>(null);
+  const lastRefresh = useRef(0);
+
+  useEffect(() => {
+    let stop = () => {};
+    void backend
+      .onSyncProgress((stored, total) => {
+        setArriving({ stored, total });
+        const now = Date.now();
+        if (now - lastRefresh.current > REFRESH_WHILE_SYNCING_MS) {
+          lastRefresh.current = now;
+          void refresh();
+        }
+      })
+      .then((unsubscribe) => {
+        stop = unsubscribe;
+      });
+    return () => stop();
+  }, [refresh]);
+
+  /**
    * Check for new mail.
    *
    * `quiet` is for the automatic checks: they update the mailbox and the "checked" time but
@@ -169,6 +204,7 @@ export default function App() {
         else if (report.stored > 0) setStatus(describeSync(t, report));
         setLastChecked(new Date());
         quietFailures.current = 0;
+        setArriving(null);
         await refresh();
       } catch (e) {
         if (!quiet) {
@@ -416,7 +452,11 @@ export default function App() {
           <AssistantToggle onOpenSettings={() => openSettings("ai")} />
 
           <button className="rail-sync" onClick={() => void sync()} disabled={busy || checking}>
-            {busy || checking ? t.app.checking : t.app.syncNow}
+            {arriving
+              ? t.app.arriving(arriving.stored, arriving.total)
+              : busy || checking
+                ? t.app.checking
+                : t.app.syncNow}
           </button>
           {lastChecked && !busy && (
             <div className="rail-note">{t.app.checkedAt(clockTime(lastChecked))}</div>

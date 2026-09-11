@@ -85,6 +85,22 @@ export function setSyncWindow(days: number): void {
   }
 }
 
+/**
+ * Each message as it is stored, during a sync.
+ *
+ * A first sync runs for minutes. Without this the window has nothing to say for all of it,
+ * which is indistinguishable from a hung app even though mail is landing the whole time.
+ */
+export async function onSyncProgress(
+  handler: (stored: number, total: number) => void,
+): Promise<() => void> {
+  if (!inApp()) return () => {};
+  const stop = await listen<[number, number]>("sync-progress", (e) =>
+    handler(e.payload[0], e.payload[1]),
+  );
+  return () => stop();
+}
+
 export async function syncNow(): Promise<SyncReport> {
   if (!inApp()) return { fetched: 0, stored: 0, partial: false };
   return invoke<SyncReport>("sync_now", { days: syncWindow() });
