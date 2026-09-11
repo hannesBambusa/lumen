@@ -1,0 +1,72 @@
+[package]
+name = "lumen"
+version = "0.1.0"
+description = "Local-first desktop mail client"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "lumen_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Local store. "bundled" compiles SQLite in (FTS5 included), so behaviour does not depend
+# on whatever version the host OS ships.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# The provider trait is async: every adapter is network-bound.
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+# Spreadsheet preview. Pure Rust, so no native Excel dependency and nothing to install.
+calamine = "0.26"
+
+# Thumbnails. Only the formats that actually arrive by mail, to keep the build light.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+
+thiserror = "1"
+log = "0.4"
+
+# OAuth and Gmail. rustls rather than native-tls so the build does not depend on the host's
+# OpenSSL, which is the usual source of "works on my machine" here.
+# "blocking" because auth and sync run on dedicated threads: the flow waits on a socket
+# and a human, so an async client would buy nothing here.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+url = "2"
+
+# PKCE: verifier, S256 challenge, and the state nonce.
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+# Refresh tokens go to the OS keychain, never to disk in the clear.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+llama-cpp-2 = "0.1.156"
+whatlang = "0.18.0"
+
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# GPU offload on Apple Silicon. Other platforms run on CPU; a Vulkan/CUDA build can be added
+# per platform later without touching the code.
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "*", features = ["metal"] }

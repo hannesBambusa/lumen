@@ -1,0 +1,93 @@
+name: Build installers
+
+# Tauri cannot cross-compile: each installer has to be made on the system it targets,
+# because each links against that system's webview and toolchain. So one job per platform,
+# on GitHub's own runners, rather than a build machine per operating system.
+#
+# Triggered by hand, or by pushing a version tag. It does not run on every commit: a full
+# release build compiles llama.cpp from scratch and takes tens of minutes.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      # One platform failing should not throw away the installers the others produced.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            name: macOS (Apple silicon)
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            name: macOS (Intel)
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            name: Linux
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 22.04 rather than the newest Ubuntu: Tauri 2 needs webkit2gtk 4.1, and the runner
+      # images past this one have moved on in ways that break it.
+      - name: Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # The Rust build is the slow half by a wide margin, llama.cpp most of it.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        # Not through scripts/tauri.sh: that wrapper exists to sign dev builds so the
+        # keychain stops asking, and a release bundle is signed by Tauri itself.
+        #
+        # The Google credentials are compiled in from here rather than from the source, which
+        # is why the repository can be public. Add them under Settings, Secrets and variables,
+        # Actions; without them the app builds and says it has no credentials.
+        env:
+          LUMEN_GOOGLE_CLIENT_ID: ${{ secrets.LUMEN_GOOGLE_CLIENT_ID }}
+          LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}
+        run: pnpm exec tauri build --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-${{ matrix.target }}
+          # Everything the bundler produced: .dmg and .app, .deb and .AppImage, .msi and
+          # .exe, depending on the platform.
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*
+          if-no-files-found: error

@@ -1,0 +1,5 @@
+# Copy to config.toml and fill in the values from your Google Cloud OAuth client.
+# config.toml is not committed; see docs/google-setup.md.
+[env]
+LUMEN_GOOGLE_CLIENT_ID = ""
+LUMEN_GOOGLE_CLIENT_SECRET = ""

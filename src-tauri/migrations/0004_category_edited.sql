@@ -1,0 +1,11 @@
+-- Whether a built-in category's wording is still the seeded one.
+--
+-- The six built-ins are shown in the app's language, but what the assistant reads stays
+-- English: sorting was measured with Swedish descriptions and the model started reasoning
+-- instead of answering, losing 6 of 14. So the description in the table is the assistant's
+-- copy, and the interface shows a translation of it.
+--
+-- The moment you reword one yourself that stops being true: your wording is what the
+-- assistant reads, and no translation should paper over it. This flag is how the interface
+-- tells the two apart.
+ALTER TABLE categories ADD COLUMN edited INTEGER NOT NULL DEFAULT 0;

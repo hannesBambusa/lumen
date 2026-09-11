@@ -1,0 +1,203 @@
+import { useMemo, useState } from "react";
+
+import type { Message, Obligation, Person, PersonId } from "../types";
+import { elapsed, heat, initials, shortDate } from "../lib/format";
+import { avatarStyle } from "../lib/color";
+
+interface Props {
+  obligations: Obligation[];
+  people: Map<PersonId, Person>;
+  messages: Map<string, Message>;
+  quiet: Message[];
+  onOpenPerson: (id: PersonId) => void;
+  onSettle: (obligationId: string) => void;
+}
+
+/**
+ * The home screen, and the argument the whole app makes: you open your mail to find out
+ * what you have to do, so that is what it shows. Messages are still there, one fold down.
+ */
+export default function NowView({
+  obligations,
+  people,
+  messages,
+  quiet,
+  onOpenPerson,
+  onSettle,
+}: Props) {
+  const [showQuiet, setShowQuiet] = useState(false);
+
+  const owed = useMemo(
+    () => sortByAge(obligations.filter((o) => o.direction === "owed" && !o.settled)),
+    [obligations],
+  );
+  const awaiting = useMemo(
+    () => sortByAge(obligations.filter((o) => o.direction === "awaiting" && !o.settled)),
+    [obligations],
+  );
+
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+
+  return (
+    <div className="wrap">
+      <header className="page-head">
+        <h1 className="page-title">{today}</h1>
+        <p className="page-sub">
+          {owed.length === 0
+            ? "Nothing is waiting on you."
+            : `${owed.length} ${owed.length === 1 ? "thing needs" : "things need"} you.`}
+        </p>
+      </header>
+
+      {owed.length > 0 && (
+        <>
+          <h2 className="section-label">You owe</h2>
+          <div className="stack">
+            {owed.map((o) => (
+              <ObligationCard
+                key={o.id}
+                obligation={o}
+                person={people.get(o.personId)}
+                message={messages.get(o.messageId)}
+                onOpen={() => onOpenPerson(o.personId)}
+                onSettle={() => onSettle(o.id)}
+                settleLabel="Done"
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {awaiting.length > 0 && (
+        <>
+          <h2 className="section-label">Waiting on</h2>
+          <div className="stack">
+            {awaiting.map((o) => (
+              <ObligationCard
+                key={o.id}
+                obligation={o}
+                person={people.get(o.personId)}
+                message={messages.get(o.messageId)}
+                onOpen={() => onOpenPerson(o.personId)}
+                onSettle={() => onSettle(o.id)}
+                settleLabel="Got it"
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      <button
+        className="quiet-toggle"
+        onClick={() => setShowQuiet((v) => !v)}
+        aria-expanded={showQuiet}
+      >
+        {showQuiet ? "⌃" : "⌄"} {quiet.length} more, nothing needed from you
+      </button>
+
+      {showQuiet && (
+        <div>
+          {quiet.map((m) => (
+            <button
+              key={m.id}
+              className="quiet-row"
+              onClick={() => onOpenPerson(m.personId)}
+            >
+              <span className="quiet-from">{people.get(m.personId)?.name ?? "Unknown"}</span>
+              <span className="quiet-subject">{m.subject ?? "No subject"}</span>
+              <span className="quiet-when">{shortDate(m.sentAt)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ObligationCard({
+  obligation,
+  person,
+  message,
+  onOpen,
+  onSettle,
+  settleLabel,
+}: {
+  obligation: Obligation;
+  person?: Person;
+  message?: Message;
+  onOpen: () => void;
+  onSettle: () => void;
+  settleLabel: string;
+}) {
+  const temp = heat(obligation.since);
+  const attachmentCount = message?.attachmentIds.length ?? 0;
+
+  return (
+    <div
+      className={`card age-${temp}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <div className="card-head">
+        {person && (
+          <div className="avatar" style={avatarStyle(person.email)} aria-hidden="true">
+            {initials(person)}
+          </div>
+        )}
+        <div className="card-top">
+          <div className="card-who">{person?.name ?? "Unknown"}</div>
+        </div>
+        <span className={`age-pill ${temp === "cool" ? "" : temp}`}>
+          {elapsed(obligation.since)}
+        </span>
+      </div>
+
+      <div className="card-ask">{obligation.summary}</div>
+
+      {attachmentCount > 0 && (
+        <div className="card-meta">
+          {attachmentCount} {attachmentCount === 1 ? "file" : "files"} attached
+        </div>
+      )}
+
+      <div className="card-actions">
+        <button
+          className="chip"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
+          Open
+        </button>
+        <button
+          className="chip"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSettle();
+          }}
+        >
+          {settleLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Oldest first: the thing you have been avoiding longest is the thing to see first. */
+function sortByAge(items: Obligation[]): Obligation[] {
+  return [...items].sort(
+    (a, b) => new Date(a.since).getTime() - new Date(b.since).getTime(),
+  );
+}

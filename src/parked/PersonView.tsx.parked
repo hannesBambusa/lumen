@@ -1,0 +1,113 @@
+import { useMemo } from "react";
+
+import type { Message, Person, Thing, ThingId } from "../types";
+import { fileSize, initials, kindLabel, shortDate, timeOfDay } from "../lib/format";
+import { avatarStyle } from "../lib/color";
+
+interface Props {
+  person: Person;
+  messages: Message[];
+  things: Map<ThingId, Thing>;
+}
+
+/**
+ * One person, everything they ever sent you and everything you sent back.
+ *
+ * Subject lines are ignored: threads were only ever a filing trick, and "which thread was
+ * that in" is a question this view is built to delete. Their files live in the margin,
+ * because that is how people actually remember them ("Asgeir sent me that CSV"), not by
+ * which message happened to carry them.
+ */
+export default function PersonView({ person, messages, things }: Props) {
+  const ordered = useMemo(
+    () => [...messages].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()),
+    [messages],
+  );
+
+  const theirFiles = useMemo(
+    () =>
+      ordered
+        .filter((m) => !m.fromMe)
+        .flatMap((m) => m.attachmentIds)
+        .map((id) => things.get(id))
+        .filter((t): t is Thing => Boolean(t))
+        .reverse(),
+    [ordered, things],
+  );
+
+  return (
+    <div className="person-scroll">
+      <header className="person-head">
+        <div className="avatar lg" style={avatarStyle(person.email)} aria-hidden="true">
+          {initials(person)}
+        </div>
+        <div>
+          <h1 className="page-title">{person.name}</h1>
+          <p className="page-sub">
+            {person.role ? `${person.role} · ${person.email}` : person.email}
+          </p>
+        </div>
+      </header>
+
+      <div className="person-cols">
+        <div>
+          {ordered.length === 0 && <p className="empty">No messages with {person.name}.</p>}
+
+          {ordered.map((m) => (
+            <article key={m.id} className={m.fromMe ? "turn mine" : "turn"}>
+              <div className="turn-when">
+                {m.fromMe ? "You" : person.name.split(" ")[0]} · {shortDate(m.sentAt)}{" "}
+                {timeOfDay(m.sentAt)}
+                {/* Subject shown quietly, not as a heading: it is context here, not structure. */}
+                {m.subject && <span className="turn-subject"> · {m.subject}</span>}
+              </div>
+              <div className="bubble">{m.body}</div>
+              {m.attachmentIds.length > 0 && (
+                <div className="turn-files">
+                  {m.attachmentIds.map((id) => {
+                    const thing = things.get(id);
+                    if (!thing) return null;
+                    return (
+                      <button key={id} className="file-pill" title={thing.filename}>
+                        <em className="pill-kind">{kindLabel(thing)}</em>
+                        <span>{thing.filename}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+
+        <aside>
+          <div className="side-block">
+            <h2 className="side-label">Files from them</h2>
+            {theirFiles.length === 0 ? (
+              <p className="page-sub">Nothing yet.</p>
+            ) : (
+              <div className="stack">
+                {theirFiles.map((thing) => (
+                  <button key={thing.id} className="file-pill" title={thing.filename}>
+                    <em className="pill-kind">{kindLabel(thing)}</em>
+                    <span>{thing.filename}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="side-block">
+            <h2 className="side-label">History</h2>
+            <p className="page-sub">
+              {ordered.length} messages since{" "}
+              {shortDate(ordered[0]?.sentAt ?? new Date().toISOString())}
+              {theirFiles.length > 0 &&
+                ` · ${fileSize(theirFiles.reduce((sum, t) => sum + t.sizeBytes, 0))} of files`}
+            </p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
