@@ -1,8 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import type { Message, Person, Thing } from "../types";
-import { messages as fixtureMessages, people as fixturePeople, things as fixtureThings } from "../fixtures";
+import type { Content, Message, Person, Thing } from "../types";
+import {
+  bodies as fixtureBodies,
+  messages as fixtureMessages,
+  people as fixturePeople,
+  things as fixtureThings,
+} from "../fixtures";
 
 export interface Mailbox {
   /** The signed-in address, or null when nobody has connected an account yet. */
@@ -53,9 +58,36 @@ export async function loadMailbox(): Promise<Mailbox> {
   return invoke<Mailbox>("load_mailbox");
 }
 
+/**
+ * How far back a sync reaches, in days. `0` means everything.
+ *
+ * Kept here rather than in the backend so the choice is visible in Settings and travels
+ * with every sync, automatic ones included.
+ */
+export const SYNC_WINDOWS = [30, 60, 180, 365, 0] as const;
+
+const WINDOW_KEY = "lumen.syncDays";
+
+export function syncWindow(): number {
+  try {
+    const raw = Number(localStorage.getItem(WINDOW_KEY));
+    return SYNC_WINDOWS.includes(raw as (typeof SYNC_WINDOWS)[number]) ? raw : 60;
+  } catch {
+    return 60;
+  }
+}
+
+export function setSyncWindow(days: number): void {
+  try {
+    localStorage.setItem(WINDOW_KEY, String(days));
+  } catch {
+    // A preference is not worth failing over.
+  }
+}
+
 export async function syncNow(): Promise<SyncReport> {
   if (!inApp()) return { fetched: 0, stored: 0, partial: false };
-  return invoke<SyncReport>("sync_now");
+  return invoke<SyncReport>("sync_now", { days: syncWindow() });
 }
 
 /**
@@ -64,6 +96,21 @@ export async function syncNow(): Promise<SyncReport> {
  * Fetched on demand rather than shipped with every message: full mail HTML is tens of
  * kilobytes each and almost none of it is ever looked at.
  */
+/**
+ * Fixture content for the browser preview, where there is no database to parse.
+ *
+ * The fixtures carry their text on the message itself, so this hands it straight back.
+ */
+function fixtureContents(messageIds: string[]): Content[] {
+  return messageIds.map((id) => ({ id, body: fixtureBodies.get(id) ?? "" }));
+}
+
+/** The readable content of one conversation's messages. See `Content`. */
+export async function threadContents(messageIds: string[]): Promise<Content[]> {
+  if (!inApp()) return fixtureContents(messageIds);
+  return invoke<Content[]>("thread_contents", { messageIds });
+}
+
 export async function originalHtml(messageId: string): Promise<string | null> {
   if (!inApp()) return null;
   return invoke<string | null>("original_html", { messageId });

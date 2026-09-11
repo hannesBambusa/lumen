@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import type { Message, Person, PersonId } from "../types";
+import type { Content, Message, MessageId, Person, PersonId } from "../types";
 import { initials, shortDate, timeOfDay } from "../lib/format";
 import { avatarStyle } from "../lib/color";
 import { parseBody } from "../lib/quotes";
@@ -9,6 +9,8 @@ import { useT } from "../lib/i18n";
 interface Props {
   messages: Message[];
   people: Map<PersonId, Person>;
+  /** The words themselves, fetched with the conversation. */
+  contents: Map<MessageId, Content>;
 }
 
 /**
@@ -25,7 +27,7 @@ interface Props {
  * was open. Consistency wins: you open a conversation to see what just happened, and
  * scrolling down walks backwards through how it got there.
  */
-export default function Timeline({ messages, people }: Props) {
+export default function Timeline({ messages, people, contents }: Props) {
   const t = useT();
   const ordered = useMemo(
     () =>
@@ -35,12 +37,12 @@ export default function Timeline({ messages, people }: Props) {
           message,
           // The backend already strips quotes and signatures from HTML mail; this catches
           // the plain-text ones and anything the backend left behind.
-          said: parseBody(message.body).body.trim(),
+          said: parseBody(contents.get(message.id)?.body ?? "").body.trim(),
         }))
         // A message that is nothing but a signature or a quote has nothing to contribute
         // here, and leaving an empty entry in a timeline just looks broken.
         .filter((entry) => entry.said.length > 0),
-    [messages],
+    [messages, contents],
   );
 
   if (ordered.length === 0) {

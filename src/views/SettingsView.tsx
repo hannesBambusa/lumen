@@ -85,6 +85,8 @@ export default function SettingsView({ tab: initial = "general" }: Props) {
         <>
       <Appearance />
 
+      <MailWindow />
+
       <section className="settings-section">
         <h2>{t.settings.language}</h2>
         <p className="settings-lede">{t.settings.languageLede}</p>
@@ -227,6 +229,47 @@ export default function SettingsView({ tab: initial = "general" }: Props) {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * How much of the mailbox to keep locally.
+ *
+ * Visible because its absence was indistinguishable from a bug: an account with thousands
+ * of messages showed 244, and nothing on screen explained that the sync only reaches back
+ * sixty days.
+ */
+function MailWindow() {
+  const t = useT();
+  const [days, setDays] = useState(() => backend.syncWindow());
+
+  return (
+    <section className="settings-section">
+      <h2>{t.settings.mailWindow}</h2>
+      <p className="settings-lede">{t.settings.mailWindowLede}</p>
+
+      <div className="setting">
+        <div className="setting-text">
+          <div className="setting-name">{t.settings.fetchBack}</div>
+          <div className="setting-desc">{t.settings.fetchBackDesc}</div>
+        </div>
+        <select
+          value={days}
+          aria-label={t.settings.fetchBack}
+          onChange={(e) => {
+            const chosen = Number(e.target.value);
+            backend.setSyncWindow(chosen);
+            setDays(chosen);
+          }}
+        >
+          {backend.SYNC_WINDOWS.map((option) => (
+            <option key={option} value={option}>
+              {t.settings.window[String(option)]}
+            </option>
+          ))}
+        </select>
+      </div>
+    </section>
   );
 }
 

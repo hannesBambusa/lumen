@@ -46,7 +46,7 @@ export const things: Thing[] = [
   { id: "t14", filename: "segment-audit.numbers", kind: "sheet", sizeBytes: 220_000, personId: "asgeir", messageId: "m5", receivedAt: ago(12) },
 ];
 
-export const messages: Message[] = [
+const written: Array<Omit<Message, "preview"> & { body: string }> = [
   // Asgeir: a thread that has been running for weeks. The oldest ask is still unanswered,
   // which is exactly the failure the home screen exists to surface.
   { id: "m1", personId: "asgeir", fromMe: false, subject: "Klaviyo flow B", body: "Hei Hannes! Har du tid til å se på flow B denne uka? Noen kunder rapporterer at de får e-posten to ganger.", sentAt: ago(21), attachmentIds: [] },
@@ -88,6 +88,21 @@ export const messages: Message[] = [
   { id: "m22", personId: "klaviyo", fromMe: false, subject: "New: conditional splits in flows", body: "Product update.", sentAt: ago(8), attachmentIds: [] , category: "newsletter", categorySource: "rule"},
   { id: "m23", personId: "shopify", fromMe: false, subject: "Payout of 12 440 SEK is on the way", body: "Your payout has been sent to your bank account.", sentAt: ago(10), attachmentIds: [] , category: "invoice", categorySource: "rule"},
 ];
+
+/**
+ * The fixture mailbox, in the two shapes the app uses.
+ *
+ * `messages` is what a list needs, `bodies` what a reader asks for afterwards. Kept apart
+ * here for the same reason as in the backend: the list should never carry the text of every
+ * message in the mailbox.
+ */
+export const messages: Message[] = written.map(({ body, ...rest }) => ({
+  ...rest,
+  preview: body.slice(0, 300),
+}));
+
+export const bodies = new Map(written.map((m) => [m.id, m.body]));
+
 
 /**
  * Hand-written for now.

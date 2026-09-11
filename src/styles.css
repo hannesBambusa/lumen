@@ -597,6 +597,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 
 .mrow-subject {
+  /* Takes the space between the direction arrow and the date. Without this, space-between
+     spreads the gap around all three and every subject starts at a different place. */
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2671,3 +2675,108 @@ button.who:hover { border-color: var(--line-strong); color: var(--ink); }
 }
 
 .rail-relink:hover:not(:disabled) { color: var(--accent); }
+
+/* The search over the mail list. Narrower than the one on the Files page, which sits on a
+   wide sheet rather than in a column. */
+.listsearch {
+  margin: 0;
+  padding: 10px 12px 0;
+}
+
+.listsearch .search { font-size: calc(12.5px * var(--fs)); }
+
+.threadlist .search-count {
+  margin: 8px 12px 0;
+  font-size: calc(11.5px * var(--fs));
+  color: var(--ink-3);
+}
+
+/* ---------- search results ---------- */
+
+/* The matched words. Not the accent colour: that already means "this app is doing
+   something", and a row full of it would read as an action rather than an answer. */
+.hit {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--warm-soft);
+  color: var(--warm);
+  font-weight: 620;
+}
+
+.search-people {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px 0;
+}
+
+.search-person {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper-2);
+  text-align: left;
+}
+
+.search-person:hover { border-color: var(--accent); background: var(--card); }
+
+.search-person-text { min-width: 0; flex: 1; }
+
+.search-person-name {
+  display: block;
+  font-size: calc(12.5px * var(--fs));
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.search-person-mail {
+  display: block;
+  font-size: calc(11px * var(--fs));
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-person-count { font-size: calc(11px * var(--fs)); color: var(--ink-3); white-space: nowrap; }
+
+/* Which folder a result is in. A search crosses all of them, so without this you find a
+   mail and then cannot find it again. */
+.trow-folder {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--sunk);
+  color: var(--ink-3);
+  font-size: calc(10px * var(--fs));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Why a row is in the results, when the row itself does not show it. */
+.trow-why {
+  display: block;
+  margin-top: 3px;
+  font-size: calc(11px * var(--fs));
+  color: var(--ink-3);
+}
+
+.trow-why-mail { opacity: 0.8; }
+
+/* The card opens the person, so it says so. */
+.search-person-go { margin-left: 6px; opacity: 0.7; }
+
+/* Which way a message went. Fixed width so the subjects still line up, and coloured only
+   enough to tell the two apart: the direction is useful, not urgent. */
+.mrow-dir {
+  flex: none;
+  width: 13px;
+  margin-right: 5px;
+  font-size: calc(11px * var(--fs));
+  line-height: 1;
+}
+
+.mrow-dir.sent { color: var(--accent-2); }
+
+.mrow-dir.received { color: var(--ink-3); }

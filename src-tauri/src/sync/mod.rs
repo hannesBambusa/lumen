@@ -23,12 +23,48 @@ pub enum SyncError {
 
 pub type Result<T> = std::result::Result<T, SyncError>;
 
-/// What a first sync pulls.
+/// How far back a sync reaches, and how much it will pull.
 ///
-/// A cutoff rather than the whole mailbox: a decade of mail takes a very long time to
-/// download and nobody needs it to start using the app. Older mail can be fetched later.
-const FIRST_SYNC_QUERY: &str = "newer_than:60d -in:spam -in:trash";
-const FIRST_SYNC_LIMIT: usize = 400;
+/// A cutoff rather than the whole mailbox by default: a decade of mail takes a very long
+/// time to download and nobody needs it to start using the app. But the cutoff has to be
+/// visible and changeable, because "my mailbox has thousands of messages and this shows 244"
+/// is indistinguishable from a bug when nothing says otherwise.
+///
+/// The ceiling scales with the window rather than being one number: a wider window is a
+/// deliberate request for more, and a cap that did not move with it would silently truncate
+/// exactly the people who asked.
+#[derive(Debug, Clone, Copy)]
+pub struct Window {
+    /// How many days back, or `None` for everything.
+    pub days: Option<u32>,
+}
+
+impl Default for Window {
+    fn default() -> Self {
+        Self { days: Some(60) }
+    }
+}
+
+impl Window {
+    fn query(&self) -> String {
+        match self.days {
+            Some(days) => format!("newer_than:{days}d -in:spam -in:trash"),
+            None => "-in:spam -in:trash".to_string(),
+        }
+    }
+
+    /// Deliberately generous. A run that stops at the ceiling reports itself as partial and
+    /// the next one carries on, because already-stored messages are skipped.
+    fn limit(&self) -> usize {
+        match self.days {
+            Some(days) if days <= 30 => 600,
+            Some(days) if days <= 60 => 1_000,
+            Some(days) if days <= 180 => 3_000,
+            Some(_) => 6_000,
+            None => 20_000,
+        }
+    }
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,10 +132,14 @@ fn reconcile_drafts(db: &Db, account: &mut GmailAccount, account_id: i64) -> Res
     Ok(gone.len())
 }
 
-pub fn sync_account(db: &Db, account: &mut GmailAccount) -> Result<SyncReport> {
+pub fn sync_account(
+    db: &Db,
+    account: &mut GmailAccount,
+    window: Window,
+) -> Result<SyncReport> {
     let account_id = db.with_conn(|conn| upsert_account(conn, account.email()))?;
 
-    let listed = account.list_message_ids(FIRST_SYNC_QUERY, FIRST_SYNC_LIMIT)?;
+    let listed = account.list_message_ids(&window.query(), window.limit())?;
     let known = db.with_conn(|conn| known_remote_ids(conn, account_id))?;
 
     // Drafts first: they are the one class of message Gmail routinely deletes behind your

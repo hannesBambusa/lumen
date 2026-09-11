@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { Message, Person, PersonId, Thing, ThingId, Thread } from "../types";
+import type { Content, Message, Person, PersonId, Thing, ThingId, Thread } from "../types";
 import { initials, kindLabel, shortDate, timeOfDay } from "../lib/format";
 import { avatarStyle } from "../lib/color";
 import { countQuotedMessages, parseBody } from "../lib/quotes";
@@ -51,6 +51,15 @@ export default function ThreadReader({ thread, messages, people, things }: Props
   // scrolling down walks backwards through how it got there.
   const reading = useMemo(() => [...ordered].reverse(), [ordered]);
 
+  /**
+   * The readable content of this conversation, fetched when it opens.
+   *
+   * Not part of the mailbox the app loads at startup: deriving every message's body, quotes
+   * and signature up front took fourteen seconds on a two-thousand-message mailbox. Here it
+   * is a handful of messages and costs milliseconds.
+   */
+  const [contents, setContents] = useState<Map<string, Content>>(new Map());
+
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [highlight, setHighlight] = useState<PersonId | null>(null);
   const [view, setView] = useState<"reading" | "timeline">("reading");
@@ -78,6 +87,25 @@ export default function ThreadReader({ thread, messages, people, things }: Props
     // Keyed on the thread, not on `ordered`: opening a thread marks its messages read, which
     // changes `ordered`, and re-running here would collapse the very messages that were
     // expanded because they were unread a moment ago.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setContents(new Map());
+
+    void backend
+      .threadContents(thread.messageIds)
+      .then((fetched) => {
+        if (!cancelled) setContents(new Map(fetched.map((c) => [c.id, c])));
+      })
+      .catch(() => {
+        // Without it the messages show their preview lines, which is thin but not broken.
+      });
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.id]);
 
@@ -224,7 +252,13 @@ export default function ThreadReader({ thread, messages, people, things }: Props
       </header>
 
       {summarising && (
-        <ThreadSummary key={thread.id} threadKey={thread.id} messages={ordered} people={people} />
+        <ThreadSummary
+          key={thread.id}
+          threadKey={thread.id}
+          messages={ordered}
+          contents={contents}
+          people={people}
+        />
       )}
 
       {writing && (
@@ -236,7 +270,7 @@ export default function ThreadReader({ thread, messages, people, things }: Props
       )}
 
       {view === "timeline" ? (
-        <Timeline messages={ordered} people={people} />
+        <Timeline messages={ordered} people={people} contents={contents} />
       ) : (
       <div className="thread-body">
         {reading.map((m, index) => {
@@ -254,6 +288,7 @@ export default function ThreadReader({ thread, messages, people, things }: Props
                 open={expanded.has(m.id)}
                 dimmed={dimmed}
                 onToggle={() => toggle(m.id)}
+                content={contents.get(m.id)}
               />
               {gap && <div className="gap">{gap}</div>}
             </div>
@@ -272,6 +307,7 @@ function ThreadMessage({
   open,
   dimmed,
   onToggle,
+  content,
 }: {
   message: Message;
   person?: Person;
@@ -279,15 +315,17 @@ function ThreadMessage({
   open: boolean;
   dimmed: boolean;
   onToggle: () => void;
+  /** Absent until the conversation's content arrives, which is a blink. */
+  content?: Content;
 }) {
   const t = useT();
   const [showQuoted, setShowQuoted] = useState(false);
   const [showSignature, setShowSignature] = useState(false);
 
-  const parsed = useMemo(() => parseBody(message.body), [message.body]);
+  const parsed = useMemo(() => parseBody(content?.body ?? ""), [content?.body]);
   // HTML mail has its quotes split on the backend, where the markup is still intact; plain
   // text has them split here. Either way the reader sees one "show quoted text" control.
-  const quotedLevels = message.quoted ?? [];
+  const quotedLevels = content?.quoted ?? [];
   const quotedCount = countQuotedMessages(parsed.quoted);
   const who = message.fromMe ? t.common.you : person?.name ?? t.common.unknown;
 
@@ -308,7 +346,7 @@ function ThreadMessage({
           {message.fromMe ? "ME" : person ? initials(person) : "?"}
         </span>
         <span className="tmsg-who">{who}</span>
-        <span className="tmsg-peek">{parsed.body.replace(/\s+/g, " ")}</span>
+        <span className="tmsg-peek">{message.preview.replace(/\s+/g, " ")}</span>
         {message.attachmentIds.length > 0 && (
           <span className="tmsg-clip">{message.attachmentIds.length}</span>
         )}
@@ -341,15 +379,15 @@ function ThreadMessage({
 
         <MessageBody
           messageId={message.id}
-          html={message.bodyHtml}
-          text={parsed.body}
-          signatureHtml={message.signatureHtml}
+          html={content?.bodyHtml}
+          text={parsed.body || message.preview}
+          signatureHtml={content?.signatureHtml}
           hasOriginal={message.hasOriginal}
           defaultOriginal={!message.fromMe && person?.isBroadcast}
           senderEmail={message.fromMe ? undefined : person?.email}
         />
 
-        {!message.bodyHtml && parsed.signature && (
+        {!content?.bodyHtml && parsed.signature && (
           <div className="fold">
             <button className="fold-btn" onClick={() => setShowSignature((v) => !v)}>
               {showSignature ? t.thread.hideSignature : t.thread.signature}

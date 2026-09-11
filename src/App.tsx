@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 
 import "./styles.css";
 
-import type { FolderId, Message, MessageId, Person, PersonId, Thing } from "./types";
+import type { FolderId, Message, Person, PersonId, Thing } from "./types";
 import {
   ArchiveIcon,
   DraftIcon,
@@ -27,10 +27,11 @@ import Boot from "./components/Boot";
 import { SettingsIcon } from "./components/Icon";
 import ClassicView from "./views/ClassicView";
 import ConnectView from "./views/ConnectView";
-import MessageView from "./views/MessageView";
 import PeopleList from "./views/PeopleList";
 import PersonMailList from "./views/PersonMailList";
 import ThingsView from "./views/ThingsView";
+import ThreadReader from "./views/ThreadReader";
+import { buildThreads } from "./lib/threads";
 
 /**
  * Two readings of one mailbox.
@@ -87,7 +88,7 @@ export default function App() {
 
   const [folder, setFolder] = useState<FolderId>("inbox");
   const [person, setPerson] = useState<PersonId | null>(null);
-  const [message, setMessage] = useState<MessageId | null>(null);
+  const [thread, setThread] = useState<string | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
@@ -246,12 +247,23 @@ export default function App() {
   const sorting = useCategorize(refresh);
 
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+
+  // The conversations with the selected person, shared by the list and the reader beside it
+  // so both agree on what a conversation is.
+  const personThreads = useMemo(
+    () =>
+      person
+        ? buildThreads(messages.filter((m) => m.personId === person && !m.isDraft))
+        : [],
+    [messages, person],
+  );
+  const open = personThreads.find((t) => t.id === thread) ?? null;
   const thingsById = useMemo(() => new Map(things.map((t) => [t.id, t])), [things]);
   const unreadCount = messages.filter((m) => m.unread).length;
 
   const selectPerson = (id: PersonId) => {
     setPerson(id);
-    setMessage(null);
+    setThread(null);
   };
 
   /**
@@ -272,9 +284,9 @@ export default function App() {
     backend.markRead(unread).catch((e) => console.warn("could not mark read on Gmail:", e));
   }, []);
 
-  const openMessage = (id: MessageId) => {
-    setMessage(id);
-    markRead([id]);
+  const openThread = (id: string, messageIds: string[]) => {
+    setThread(id);
+    markRead(messageIds);
   };
 
   /** Settings, on the tab that answers whatever sent you there. */
@@ -282,6 +294,21 @@ export default function App() {
     setSettingsTab(tab);
     setShowFiles(false);
     setShowSettings(true);
+  };
+
+  /**
+   * Open everything exchanged with one person.
+   *
+   * Finding a person in search and wanting "all their mail" is the same question the People
+   * view was built to answer, in both directions and with their files, so it hands over
+   * rather than reimplementing a narrower version of it in the list.
+   */
+  const openPerson = (id: PersonId) => {
+    setMode("people");
+    setPerson(id);
+    setThread(null);
+    setShowFiles(false);
+    setShowSettings(false);
   };
 
   const switchMode = (next: Mode) => {
@@ -453,6 +480,7 @@ export default function App() {
           onOpenThread={markRead}
           sorting={sorting}
           onOpenAiSettings={() => openSettings("ai")}
+          onOpenPerson={openPerson}
         />
       ) : (
         <>
@@ -469,14 +497,22 @@ export default function App() {
                 person={peopleById.get(person)!}
                 messages={messages.filter((m) => m.personId === person && !m.isDraft)}
                 things={thingsById}
-                selected={message}
-                onSelect={openMessage}
+                selected={thread}
+                onSelect={(id) =>
+                  openThread(
+                    id,
+                    personThreads.find((t) => t.id === id)?.messageIds ?? [],
+                  )
+                }
               />
               <section className="reader" aria-label={t.app.message}>
-                {message ? (
-                  <MessageView
-                    message={messages.find((m) => m.id === message)!}
-                    person={peopleById.get(person)!}
+                {open ? (
+                  <ThreadReader
+                    thread={open}
+                    messages={open.messageIds
+                      .map((id) => messagesRef.current.get(id)!)
+                      .filter(Boolean)}
+                    people={peopleById}
                     things={thingsById}
                   />
                 ) : (

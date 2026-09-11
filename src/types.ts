@@ -31,28 +31,16 @@ export interface Message {
   /** True when Hannes wrote it. Drives which side of the conversation it sits on. */
   fromMe: boolean;
   subject?: string;
-  body: string;
   /**
-   * HTML for the reading pane, when the message had an HTML part.
+   * The opening of the message, for the preview line in a list.
    *
-   * Its meaning depends on `layout`: `"inline"` is a small allowlisted subset that inherits
-   * the app's typography, `"frame"` is full mail HTML for an isolated frame.
-   *
-   * `body` stays the text version regardless: previews, search and quote folding all need
-   * text, and a message that renders as HTML must still be searchable.
+   * The full body, its markup, the signature and the quoted history are fetched per
+   * conversation when one is opened. Deriving all of that for every message at startup meant
+   * re-parsing tens of megabytes of mail HTML before the window could draw.
    */
-  bodyHtml?: string;
-  /** True when the sender's own layout can be fetched with `originalHtml`. */
+  preview: string;
+  /** Whether the sender's own layout exists to ask for. */
   hasOriginal?: boolean;
-  /** The sender's signature, split off so it can be hidden. */
-  signatureHtml?: string;
-  /**
-   * Earlier messages this one quotes, one entry per level of the chain.
-   *
-   * Split apart so each can be rendered in the app's own design instead of as one blob of
-   * whichever client's markup happened to produce it.
-   */
-  quoted?: QuotedMessage[];
   sentAt: string; // ISO 8601
   attachmentIds: ThingId[];
   unread?: boolean;
@@ -128,6 +116,22 @@ export type CategorySource = "rule" | "model" | "user";
  * Derived, never stored: the underlying data is still people and messages, so the two
  * modes are two readings of one mailbox rather than two copies of it.
  */
+/**
+ * One message's readable content, fetched when a conversation is opened.
+ *
+ * Everything here comes from parsing the stored HTML, which is the expensive part: doing it
+ * for one conversation costs milliseconds, doing it for a whole mailbox cost fourteen
+ * seconds of startup.
+ */
+export interface Content {
+  id: MessageId;
+  /** The message as text, with quotes and signature already removed. */
+  body: string;
+  bodyHtml?: string;
+  signatureHtml?: string;
+  quoted?: QuotedMessage[];
+}
+
 export interface Thread {
   id: string;
   subject: string;

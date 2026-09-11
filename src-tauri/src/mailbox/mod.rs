@@ -63,33 +63,17 @@ pub struct Message {
     pub from_me: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    pub body: String,
-    /// The message as allowlisted inline markup, in the app's own design.
+    /// The opening of the message, for the preview line in a list.
     ///
-    /// Always this, never the sender's layout. Deciding automatically which mail "deserves"
-    /// its original rendering turned out to be unwinnable: a corporate signature is
-    /// structurally identical to a small newsletter, so every heuristic misfired on ordinary
-    /// replies. The sender's version is available on request via `original_html`.
-    ///
-    /// `body` stays the text version regardless: previews, search and quote folding all need
-    /// text, and a message that renders as markup must still be searchable.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body_html: Option<String>,
+    /// Plain text and short. The full body, its markup, the signature and the quoted
+    /// history are fetched per conversation when one is opened: deriving all of that for
+    /// every message at startup meant re-parsing 56 MB of mail HTML before the window could
+    /// draw, which took fourteen seconds on a two-thousand-message mailbox and would only
+    /// grow. See [`thread_contents`].
+    pub preview: String,
     /// Whether a sender's-layout version exists to ask for.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_original: bool,
-    /// The sender's signature, split off so it can be hidden.
-    ///
-    /// In a thread of eight replies the same signature block appears eight times, and it is
-    /// routinely longer than anything anyone wrote.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature_html: Option<String>,
-    /// The earlier messages this one quotes, one entry per level of the chain.
-    ///
-    /// Always inline, never framed: quoted history is reference material, so it is rendered
-    /// in the app's own design rather than preserving whichever client produced it.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub quoted: Vec<html::QuotedMessage>,
     pub sent_at: String,
     pub attachment_ids: Vec<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -111,6 +95,39 @@ pub struct Message {
     /// model never made an AI one would be a small lie told on every row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_source: Option<String>,
+}
+
+/// One message's readable content, derived on demand.
+///
+/// Everything here comes from parsing the stored HTML, which is the expensive part of this
+/// module. Doing it for a single conversation when it is opened costs milliseconds; doing it
+/// for the whole mailbox at startup cost fourteen seconds.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Content {
+    pub id: String,
+    /// The message as text, with quotes and signature already removed.
+    pub body: String,
+    /// The message as allowlisted inline markup, in the app's own design.
+    ///
+    /// Always this, never the sender's layout. Deciding automatically which mail "deserves"
+    /// its original rendering turned out to be unwinnable: a corporate signature is
+    /// structurally identical to a small newsletter, so every heuristic misfired on ordinary
+    /// replies. The sender's version is available on request via `original_html`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
+    /// The sender's signature, split off so it can be hidden.
+    ///
+    /// In a thread of eight replies the same signature block appears eight times, and it is
+    /// routinely longer than anything anyone wrote.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_html: Option<String>,
+    /// The earlier messages this one quotes, one entry per level of the chain.
+    ///
+    /// Always inline, never framed: quoted history is reference material, so it is rendered
+    /// in the app's own design rather than preserving whichever client produced it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub quoted: Vec<html::QuotedMessage>,
 }
 
 #[derive(Debug, Serialize)]
@@ -391,28 +408,20 @@ pub fn load(db: &Db, account_email: Option<&str>) -> Result<Mailbox, DbError> {
                 Some(Audience { cc: only_cc, others, to, copies })
             };
 
-            // Quote first, then signature: the signature belongs to *this* message, and
-            // searching the whole thing would find one inside the quoted history instead.
-            let (body_html, signature_html, quoted, own_text) = match raw.body_html.as_deref() {
-                None => (None, None, Vec::new(), None),
-                Some(source) => {
-                    let (own, quoted) = html::split_quote(source);
-                    let (own, signature) = html::split_signature(&own);
-
-                    let quoted = if quoted.trim().is_empty() {
-                        Vec::new()
-                    } else {
-                        html::explode_quotes(&quoted)
-                    };
-                    let signature = if signature.trim().is_empty() {
-                        None
-                    } else {
-                        Some(html::to_inline(&signature))
-                    };
-
-                    (Some(html::to_inline(&own)), signature, quoted, Some(html::to_text(&own)))
-                }
-            };
+            // No HTML parsing here. The preview is the stored snippet, or the opening of
+            // the stored plain text, and everything a reader needs is derived per
+            // conversation in `thread_contents`.
+            let preview = raw
+                .snippet
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    raw.body_text
+                        .as_deref()
+                        .map(|text| text.chars().take(PREVIEW_CHARS).collect())
+                        .unwrap_or_default()
+                });
 
             let attachment_rows = attachments.get(&raw.row_id).cloned().unwrap_or_default();
             for (id, filename, mime_type, size) in &attachment_rows {
@@ -433,14 +442,8 @@ pub fn load(db: &Db, account_email: Option<&str>) -> Result<Mailbox, DbError> {
                 person_id,
                 from_me,
                 subject: raw.subject.clone(),
-                // Text of what this message actually says, with the quoted history and the
-                // signature already removed. List previews and the timeline both want the
-                // words someone wrote, not eight repetitions of a footer.
-                body: own_text.clone().unwrap_or_else(|| body_of(&raw)),
-                body_html,
+                preview,
                 has_original: raw.body_html.is_some(),
-                signature_html,
-                quoted,
                 sent_at: to_iso(raw.sent_at),
                 attachment_ids: attachment_rows.iter().map(|(id, ..)| id.to_string()).collect(),
                 unread: raw.unread,
@@ -600,3 +603,74 @@ mod tests {
 
 #[cfg(test)]
 mod debug_test;
+
+/// How much of a message the list preview shows when there is no stored snippet.
+const PREVIEW_CHARS: usize = 300;
+
+/// The readable content of one conversation's messages, derived on demand.
+///
+/// This is the expensive work that used to happen for the whole mailbox at startup. Doing it
+/// for the handful of messages in one conversation costs milliseconds, and nothing is
+/// derived for the thousands of conversations nobody opens.
+pub fn thread_contents(db: &Db, remote_ids: &[String]) -> Result<Vec<Content>, DbError> {
+    if remote_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT remote_id, body_text, body_html FROM messages WHERE remote_id = ?1",
+        )?;
+
+        let mut out = Vec::with_capacity(remote_ids.len());
+        for remote_id in remote_ids {
+            let row = stmt
+                .query_row(params![remote_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                })
+                .ok();
+            let Some((id, body_text, body_html)) = row else { continue };
+
+            // Quote first, then signature: the signature belongs to *this* message, and
+            // searching the whole thing would find one inside the quoted history instead.
+            let content = match body_html.as_deref() {
+                None => Content {
+                    id,
+                    body: body_text.unwrap_or_default(),
+                    body_html: None,
+                    signature_html: None,
+                    quoted: Vec::new(),
+                },
+                Some(source) => {
+                    let (own, quoted) = html::split_quote(source);
+                    let (own, signature) = html::split_signature(&own);
+
+                    let quoted = if quoted.trim().is_empty() {
+                        Vec::new()
+                    } else {
+                        html::explode_quotes(&quoted)
+                    };
+                    let signature = if signature.trim().is_empty() {
+                        None
+                    } else {
+                        Some(html::to_inline(&signature))
+                    };
+
+                    Content {
+                        id,
+                        body: html::to_text(&own),
+                        body_html: Some(html::to_inline(&own)),
+                        signature_html: signature,
+                        quoted,
+                    }
+                }
+            };
+            out.push(content);
+        }
+        Ok(out)
+    })
+}

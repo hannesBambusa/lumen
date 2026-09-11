@@ -57,6 +57,7 @@ pub fn run() {
             commands::delete_category,
             commands::set_message_category,
             commands::resort_mailbox,
+            commands::thread_contents,
             commands::thread_summary,
             commands::save_thread_summary,
             commands::assistant_download_start,

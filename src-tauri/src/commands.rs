@@ -101,16 +101,26 @@ pub async fn connect_account(
 
 /// Pull recent mail into the local database.
 #[tauri::command]
-pub async fn sync_now(state: State<'_, AppState>) -> CmdResult<SyncReport> {
+pub async fn sync_now(
+    state: State<'_, AppState>,
+    days: Option<u32>,
+) -> CmdResult<SyncReport> {
     let db = state.db.clone();
     let session = state.session.clone();
+    // `None` means everything, which is a real choice, so it cannot be a missing argument
+    // too: an absent `days` falls back to the default window instead.
+    let window = match days {
+        Some(0) => sync::Window { days: None },
+        Some(days) => sync::Window { days: Some(days) },
+        None => sync::Window::default(),
+    };
 
     tauri::async_runtime::spawn_blocking(move || {
         ensure_session(&db, &session)?;
 
         let mut guard = session.lock().map_err(describe)?;
         let account = guard.as_mut().ok_or("no account is connected")?;
-        sync::sync_account(&db, account).map_err(describe)
+        sync::sync_account(&db, account, window).map_err(describe)
     })
     .await
     .map_err(describe)?
@@ -407,6 +417,24 @@ pub async fn save_thread_summary(
             Ok(())
         })
         .map_err(describe)
+}
+
+/// The readable content of one conversation, derived when it is opened.
+///
+/// Deliberately not part of `load_mailbox`: parsing every message's HTML up front took
+/// fourteen seconds on a two-thousand-message mailbox, and nothing needs it until a
+/// conversation is actually read.
+#[tauri::command]
+pub async fn thread_contents(
+    state: State<'_, AppState>,
+    message_ids: Vec<String>,
+) -> CmdResult<Vec<mailbox::Content>> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        mailbox::thread_contents(&db, &message_ids).map_err(describe)
+    })
+    .await
+    .map_err(describe)?
 }
 
 /// The categories, in the order they are shown.

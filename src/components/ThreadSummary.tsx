@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { Message, Person, PersonId } from "../types";
+import type { Content, Message, MessageId, Person, PersonId } from "../types";
 import { useAssistant } from "../lib/assistant";
 import { localeTag, modelLanguage, useLocale, useT } from "../lib/i18n";
 import { parseBody } from "../lib/quotes";
@@ -11,6 +11,8 @@ interface Props {
   /** Identifies the conversation a summary is kept under. */
   threadKey: string;
   messages: Message[];
+  /** The words to summarise, fetched with the conversation. */
+  contents: Map<MessageId, Content>;
   people: Map<PersonId, Person>;
 }
 
@@ -46,7 +48,7 @@ const MAX_CHARS = 6000;
  * conversation that has moved on. Redoing it is then a click, not something that happens
  * behind your back every time a thread gets a reply.
  */
-export default function ThreadSummary({ threadKey, messages, people }: Props) {
+export default function ThreadSummary({ threadKey, messages, contents, people }: Props) {
   const assistant = useAssistant();
   const { locale } = useLocale();
   const t = useT();
@@ -66,7 +68,8 @@ export default function ThreadSummary({ threadKey, messages, people }: Props) {
       .sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
       .map((m) => {
         const who = m.fromMe ? "Me" : people.get(m.personId)?.name ?? "Unknown";
-        return `${who} (${shortDate(m.sentAt)}): ${parseBody(m.body).body.trim()}`;
+        const said = parseBody(contents.get(m.id)?.body ?? "").body.trim();
+        return `${who} (${shortDate(m.sentAt)}): ${said}`;
       })
       .filter((line) => !line.endsWith(": "))
       .join("\n\n");
@@ -108,7 +111,7 @@ export default function ThreadSummary({ threadKey, messages, people }: Props) {
     }
     // `messages` and `people` are the thread this component was mounted for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assistant, language, threadKey, newestAt]);
+  }, [assistant, language, threadKey, newestAt, contents]);
 
   useEffect(() => {
     let cancelled = false;

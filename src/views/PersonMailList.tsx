@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 
-import type { Message, MessageId, Person, Thing, ThingId } from "../types";
+import type { Message, Person, Thing, ThingId } from "../types";
 import { initials, kindLabel, shortDate } from "../lib/format";
 import { avatarStyle } from "../lib/color";
+import { buildThreads } from "../lib/threads";
 import { FilePill } from "../components/AttachmentPreview";
 import { useT } from "../lib/i18n";
 import type { Strings } from "../lib/i18n";
@@ -11,32 +12,52 @@ interface Props {
   person: Person;
   messages: Message[];
   things: Map<ThingId, Thing>;
-  selected: MessageId | null;
-  onSelect: (id: MessageId) => void;
+  /** The open conversation. */
+  selected: string | null;
+  onSelect: (threadId: string) => void;
 }
 
 /**
- * Everything one person sent you, as mail rather than as a chat log.
+ * Everything exchanged with one person, one row per conversation.
  *
- * Subject lines survive here because this is a list of messages, not a conversation, and
- * the audience line is the point: "to you" and "you were on copy" are different situations
- * and a mail client that hides the difference makes you open things to find out.
+ * By conversation rather than by message: a back-and-forth about one thing filled five rows
+ * with the same subject, which is noise however you sort it. The row carries what is true of
+ * the exchange as a whole, and the direction arrow shows the **newest** message, because
+ * "the last word was theirs" and "the last word was mine" is the thing worth knowing at a
+ * glance.
+ *
+ * The audience line survives from the newest message: "to you" and "you were on copy" are
+ * different situations, and a mail client that hides the difference makes you open things to
+ * find out.
  */
 export default function PersonMailList({ person, messages, things, selected, onSelect }: Props) {
   const t = useT();
-  const ordered = useMemo(
-    () => [...messages].sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()),
-    [messages],
-  );
+
+  const conversations = useMemo(() => {
+    const byId = new Map(messages.map((m) => [m.id, m]));
+    return buildThreads(messages)
+      .map((thread) => {
+        const inThread = thread.messageIds
+          .map((id) => byId.get(id))
+          .filter((m): m is Message => Boolean(m))
+          .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+        return { thread, newest: inThread[0], count: inThread.length };
+      })
+      .filter((entry) => entry.newest)
+      .sort(
+        (a, b) => new Date(b.newest.sentAt).getTime() - new Date(a.newest.sentAt).getTime(),
+      );
+  }, [messages]);
 
   const theirFiles = useMemo(
     () =>
-      ordered
+      [...messages]
+        .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
         .filter((m) => !m.fromMe)
         .flatMap((m) => m.attachmentIds)
         .map((id) => things.get(id))
         .filter((t): t is Thing => Boolean(t)),
-    [ordered, things],
+    [messages, things],
   );
 
   return (
@@ -67,26 +88,36 @@ export default function PersonMailList({ person, messages, things, selected, onS
         </div>
       )}
 
-      <h3 className="pane-label">{t.common.messages(ordered.length)}</h3>
+      <h3 className="pane-label">{t.list.conversations(conversations.length)}</h3>
 
-      {ordered.map((m) => (
+      {conversations.map(({ thread, newest, count }) => (
         <button
-          key={m.id}
-          className={`mrow${m.id === selected ? " active" : ""}${m.unread ? " unread" : ""}`}
-          onClick={() => onSelect(m.id)}
+          key={thread.id}
+          className={`mrow${thread.id === selected ? " active" : ""}${thread.unread ? " unread" : ""}`}
+          onClick={() => onSelect(thread.id)}
         >
           <span className="mrow-line">
-            <span className="mrow-subject">{m.subject ?? t.common.noSubject}</span>
-            <span className="mrow-when">{shortDate(m.sentAt)}</span>
+            {/* The newest message's direction: whether the last word was theirs or yours is
+              * what you want to know before opening it. */}
+            <span
+              className={newest.fromMe ? "mrow-dir sent" : "mrow-dir received"}
+              title={newest.fromMe ? t.list.sentByYou : t.list.received}
+              aria-label={newest.fromMe ? t.list.sentByYou : t.list.received}
+            >
+              {newest.fromMe ? "↗" : "↙"}
+            </span>
+            <span className="mrow-subject">{thread.subject}</span>
+            {count > 1 && <span className="trow-count">{count}</span>}
+            <span className="mrow-when">{shortDate(newest.sentAt)}</span>
           </span>
-          <span className="mrow-audience">{audienceLabel(t, m)}</span>
+
+          <span className="mrow-audience">{audienceLabel(t, newest)}</span>
+
           <span className="mrow-preview">
-            {m.attachmentIds.length > 0 && (
-              <span className="mrow-clip">
-                {t.common.files(m.attachmentIds.length)} ·{" "}
-              </span>
+            {thread.attachmentCount > 0 && (
+              <span className="mrow-clip">{t.common.files(thread.attachmentCount)} · </span>
             )}
-            {m.body}
+            {newest.preview}
           </span>
         </button>
       ))}

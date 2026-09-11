@@ -34,7 +34,7 @@ documented setup for installed apps.
 
 - `src/types.ts`, `src/fixtures.ts` — UI domain model and the fixture mailbox
 - `src/App.tsx` — mode switch, rail, routing
-- `src/views/**` — `ClassicView`, `PeopleList`, `PersonMailList`, `MessageView`, `ThingsView`
+- `src/views/**` — `ClassicView`, `PeopleList`, `PersonMailList`, `ThreadReader`, `ThingsView`
 - `src/parked/**` — the Focus home screen, unwired on purpose
 - `src/lib/threads.ts` — subject threading and folder derivation
 - `src/lib/format.ts` — elapsed time, heat, initials, file sizes
@@ -198,6 +198,55 @@ plurals and word order differ. Dates use the locale tag (`localeTag()`), so "10 
 Swedish. Only the app's own words are translated; mail stays as written. Changing language
 remounts the tree (keyed on locale) rather than chasing every cached string. Translation
 target names shown localised, sent to the model in English.
+
+**Startup does no parsing.** Opening the app took fourteen seconds on a 2000-message
+mailbox, and measurement said why: `load_mailbox` re-derived every message's body, quotes and
+signature on every launch, 56 MB of mail HTML through `split_quote`, `split_signature`,
+`to_inline` and `to_text`, and then shipped all of it to a window that only needed subjects
+and previews to draw a list. The list payload now carries a `preview` only, taken from the
+stored snippet with no parsing at all, and a conversation's real content is fetched when it
+is opened, through `thread_contents`. **14.9s to 0.28s**, and the part that was growing with
+the mailbox no longer runs at startup at all. `src-tauri/src/mailbox/mod.rs`,
+`src/views/ThreadReader.tsx`.
+
+**Search over people, addresses and subjects**, built for a mailbox that got away from
+someone. In a box above the mail list. Matches a
+person's name, any address on the message, and therefore any company domain, plus the
+subject. Terms are ANDed and accent-folded by the existing `matches` helper, so "havard"
+finds Håvard and "kristin bakke" finds the thread she is only copied on. A search spans every
+folder rather than the open one: being told there is nothing because the single mail from
+that person was archived is worse than useless, and the count says "alla mappar" so that is
+not a surprise. Searching runs over the mailbox already in memory, so it costs no round trip;
+the per-thread haystack is built once per mailbox rather than per keystroke. **Deliberately
+not the bodies** — that is a different job with different expectations, and folding it in
+would mean a search for a colleague also returning every mail that merely mentions them. The
+FTS index is built and waiting for it.
+
+A result has to be readable at a glance, which took three things beyond filtering the list.
+**Matched words are marked** in the sender and subject, which means highlighting the original
+text from a match made on the folded one: "havard" matches "Håvard", the letters do not line
+up, and folding "æ" to "ae" makes the folded string longer, so `segments()` builds a
+character-by-character index map rather than reusing an offset. **Matching people are listed
+first**, name, address and message count, because most searches for a person mean "everything
+from them" rather than "these letters somewhere"; clicking one opens the People view for them: everything exchanged in both
+directions, with their files, which is the question that view was built to answer. The two
+modes were disjoint until then, and reimplementing a narrower version of it inside the list
+would have been the wrong half of the answer. **A row says why it is there** when the reason is not on screen: a thread found
+because someone was copied on it otherwise looks identical to a thread found for no reason,
+so it carries "Även med här: Håvard Nilsen <havard@bambusa.no>". Each result also shows which
+folder it is in, since the search crosses all of them and finding a mail you then cannot find
+again is its own failure. `src/views/ClassicView.tsx`, `src/lib/search.ts`,
+`src/components/Highlight.tsx`.
+
+**How far back a sync reaches is a setting, not a constant.** It was `newer_than:60d` with a
+400-message ceiling, hard-coded, and nothing on screen said so: an account with thousands of
+messages showed 244, which is indistinguishable from a bug. General settings now offer 30
+days, 60 days, 6 months, 1 year or everything, and the choice travels with every sync,
+automatic ones included. The ceiling scales with the window (600 up to 20 000) rather than
+staying one number, because a wider window is a deliberate request for more and a fixed cap
+would silently truncate exactly the people who asked. A run that hits the ceiling still
+reports itself partial, and the next one carries on, since stored messages are skipped.
+`src-tauri/src/sync/mod.rs`, `src/views/SettingsView.tsx`.
 
 **It builds as a downloadable app for all three platforms.** `pnpm tauri build` produces a
 signed `Lumen.app` and a `.dmg` on macOS, `.msi` and `.exe` on Windows, `.deb` and
@@ -435,10 +484,19 @@ ranks humans by most recent contact and keeps machines in their own group, with 
 and a message count each. Selecting someone shows their files as a wrapped strip at the top,
 then every message they sent, newest first, each row carrying subject, date, preview,
 attachment count and an **audience line**: "To you", "To you and 1 other", "Copied to you",
-"Sent by you". Selecting a message opens it in the fourth pane with a From/To block naming
-every recipient, the body at reading size, and attachments with file sizes. Below 1240px the
-people list collapses to avatars rather than vanishing, so you can still switch person.
-Files: `src/views/PeopleList.tsx`, `src/views/PersonMailList.tsx`, `src/views/MessageView.tsx`.
+"Sent by you", preceded by a direction arrow: ↗ sent, accented, and ↙ received, grey. The
+words say the same thing, but a column of arrows is readable without reading. The subject
+takes the space between the arrow and the date, or `space-between` spreads the gap around all
+three and every subject starts somewhere different.
+
+**One row per conversation, not per message.** A back-and-forth about one thing filled five
+rows with the same subject, which is noise however it is sorted. The row carries what is true
+of the exchange as a whole, and the arrow shows the **newest** message, because "the last word
+was theirs" against "the last word was mine" is the thing worth knowing before opening it.
+Selecting one opens it in the thread reader, the same component the mail list uses, which
+brought quoted history, attachments, translation and the category picker to this half of the
+app; the single-message view it replaced had none of those and is deleted.
+Files: `src/views/PeopleList.tsx`, `src/views/PersonMailList.tsx`, `src/views/ThreadReader.tsx`.
 
 **Attachments are cards, not chips.** A message's attachments render as a grid of cards with
 a 96px preview face, the filename and the size, so an invoice looks like an invoice before
@@ -604,6 +662,10 @@ English. Files: `src/fixtures.ts`.
   not the budget. The descriptions the assistant reads stay English, the interface shows a
   translation of them, and rewording one marks it `edited` so your words are shown and used.
   `src-tauri/migrations/0004_category_edited.sql`, `src/lib/categories.tsx`
+- **Deriving the whole mailbox at startup is what made it slow, not SQLite.** Reading 2066
+  rows took 0.25s; parsing their HTML took ten. The work is deterministic given the stored
+  markup, so it belongs where it is needed, per conversation, not on the path between launch
+  and the first paint.
 - **A Content-ID does not mean an image is part of the body.** Attachments flagged inline
   were dropped from the list on the reasoning that the body already draws them. Gmail gives
   every attached image a Content-ID whether or not the message embeds it, so images attached
