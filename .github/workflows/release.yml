@@ -21,9 +21,6 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             name: macOS (Apple silicon)
-          - platform: macos-13
-            target: x86_64-apple-darwin
-            name: macOS (Intel)
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             name: Linux
@@ -35,7 +32,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 22.04 rather than the newest Ubuntu: Tauri 2 needs webkit2gtk 4.1, and the runner
       # images past this one have moved on in ways that break it.
@@ -64,9 +61,9 @@ jobs:
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -83,7 +80,7 @@ jobs:
           LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}
         run: pnpm exec tauri build --target ${{ matrix.target }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: lumen-${{ matrix.target }}
           # Everything the bundler produced: .dmg and .app, .deb and .AppImage, .msi and
@@ -91,3 +88,37 @@ jobs:
           path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/**/*
           if-no-files-found: error
+
+  # Artifacts need a GitHub login to download, so they are no use for handing a build to
+  # someone outside the repository. A release is public: a plain link, no account, no zip.
+  # Gmail refuses .exe attachments even inside an archive, so a link is the only way to send
+  # an installer by mail at all.
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+
+      # Flattened, because the installers arrive nested under each platform's bundle
+      # folders and a release page wants files, not a tree.
+      - name: Collect the installers
+        run: |
+          mkdir -p release
+          find artifacts -type f \
+            \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' \
+               -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} release/ \;
+          ls -lh release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          draft: false
+          generate_release_notes: true
